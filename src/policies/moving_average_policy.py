@@ -1,44 +1,34 @@
-#/Users/nashe/nested_policy_pipeline/src/policies/moving_average_policy.py
-from collections import deque
+# File: src/policies/moving_average_policy.py
 import numpy as np
+from collections import deque
 
 class MovingAveragePolicy:
     """
     A simple baseline policy that charges when the current price
     is below the moving average over the last `window` steps,
     discharges when above, and holds otherwise.
-
-    Interface:
-        __init__(window: int, max_rate: float = 1.0)
-        take_action(state: np.ndarray) -> float
+    Unified take_action(state) API.
     """
 
     def __init__(self, window: int, max_rate: float = 1.0):
         """
         Args:
-            window:    Number of past time‐steps to include in the average.
-            max_rate:  Maximum magnitude of charge (+) or discharge (–) per step [kWh].
+            window:   Number of past time-steps to include in the average.
+            max_rate: Maximum magnitude of charge (+) or discharge (–) per step [kWh].
         """
         self.window = window
-        # Rolling buffer of most recent prices
         self.prices = deque(maxlen=window)
         self.max_rate = max_rate
 
-    def take_action(self, state: np.ndarray) -> float:
-        """
-        Decide on charge/discharge action based on price history.
-
-        Args:
-            state:  4‐vector [battery_level, imported_energy, market_price, cost].
-
-        Returns:
-            A float Q_n: positive → charge up to max_rate, 
-                         negative → discharge up to max_rate 
-        """
-        # Extract current price from state
-        current_price = float(state[2])
-        # Add to history
-        self.prices.append(current_price)
+    def _take_action_scalar(
+        self,
+        state_of_charge: float,
+        imported_energy: float,
+        market_price: float,
+        cost: float
+    ) -> float:
+        # Append to history
+        self.prices.append(market_price)
 
         # If not enough history yet, do nothing
         if len(self.prices) < self.window:
@@ -46,16 +36,25 @@ class MovingAveragePolicy:
 
         # Compute the moving average price
         avg_price = sum(self.prices) / len(self.prices)
-        battery_level = float(state[0])
 
         # Charge if current price below average
-        if current_price < avg_price:
+        if market_price < avg_price:
             return +self.max_rate
 
         # Discharge if above average (but not more than current SOC)
-        elif current_price > avg_price:
-            # ensure we don't discharge more than we have
-            return -min(self.max_rate, battery_level)
+        if market_price > avg_price:
+            return -min(self.max_rate, state_of_charge)
 
         # Otherwise hold
         return 0.0
+
+    def take_action(self, state: np.ndarray) -> float:
+        """
+        Unified API:
+          Args:
+            state: 5‐vector [soc, imported_energy, market_price, cost, demand]
+          Returns:
+            Q_n: positive → charge, negative → discharge
+        """
+        soc, imp_en, price, cost, demand = state
+        return self._take_action_scalar(soc, imp_en, price, cost)

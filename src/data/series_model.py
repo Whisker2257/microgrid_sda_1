@@ -1,3 +1,4 @@
+#/Users/nashe/nested_policy_pipeline/src/data/series_model.py
 """
 Helpers to synthesise market-price and demand series for the battery
 simulation.  Keeps the generation logic in one place so notebooks or

@@ -1,61 +1,55 @@
-# src/utils/filter.py
+# File: src/utils/filter.py
 import ast
 import inspect
+import numpy as np
 from typing import Tuple, Dict, Any
-
 
 def vartheta(wq_code: str) -> Tuple[Any, Dict[str, Any]]:
     """
-    Filter and instantiate an LLM-generated policy.
-
-    This function:
-      1. Parses the code via AST to enforce safety constraints.
-      2. Executes the code in a restricted namespace.
-      3. Finds exactly one policy class with a take_action method.
-      4. Extracts its __init__ parameters and default values.
-      5. Instantiates the policy and returns both the instance and params.
-
-    Args:
-      wq_code:      Multiline Python code defining a policy class.
-
-    Returns:
-      policy_inst:  An instance of the generated policy class.
-      params:       A dict mapping parameter names to values used in instantiation.
-
-    Raises:
-      ValueError:   If unsafe constructs are detected or class extraction fails.
+    Filter and instantiate an LLM-generated policy, then wrap its take_action
+    so it always conforms to take_action(state: np.ndarray) -> float.
     """
-    # 1) Parse code into an AST and enforce safety (no imports allowed)
+    # 1) Parse & ban imports
     tree = ast.parse(wq_code)
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             raise ValueError("Import statements not allowed in generated policy code.")
 
-    # 2) Compile and execute in restricted namespace
+    # 2) Exec in a namespace where np is available
+    safe_globals: Dict[str, Any] = {"np": np}
     local_ns: Dict[str, Any] = {}
-    exec(compile(tree, filename="<generated_policy>", mode="exec"), {}, local_ns)
+    exec(compile(tree, filename="<generated_policy>", mode="exec"), safe_globals, local_ns)
 
-    # 3) Find policy classes (must define a take_action method)
-    policy_classes = [obj for obj in local_ns.values()
-                      if inspect.isclass(obj) and hasattr(obj, 'take_action')]
+    # 3) Find exactly one policy class
+    policy_classes = [
+        obj for obj in local_ns.values()
+        if inspect.isclass(obj) and hasattr(obj, "take_action")
+    ]
     if len(policy_classes) != 1:
-        raise ValueError(
-            f"Expected exactly one policy class with take_action, found {len(policy_classes)}"
-        )
+        raise ValueError(f"Expected exactly one policy class with take_action, found {len(policy_classes)}")
     PolicyClass = policy_classes[0]
 
-    # 4) Inspect __init__ to get parameters and defaults
+    # 4) Inspect __init__ for defaults
     sig = inspect.signature(PolicyClass.__init__)
     init_params: Dict[str, Any] = {}
-
     for name, param in sig.parameters.items():
-        if name == 'self':
+        if name == "self":
             continue
         if param.default is inspect.Parameter.empty:
             raise ValueError(f"Parameter '{name}' in __init__ must have a default value.")
         init_params[name] = param.default
 
-    # 5) Instantiate policy with default parameters
+    # 5) Instantiate policy
     policy_inst = PolicyClass(**init_params)
+
+    # 6) Wrap its take_action if it doesn't already accept a single state arg
+    orig = policy_inst.take_action
+    bound_sig = inspect.signature(orig)
+    if len(bound_sig.parameters) != 1:
+        # e.g. orig takes (state_of_charge, imported_energy, market_price, cost)
+        def unified_take_action(state: np.ndarray) -> float:
+            soc, imp, price, cost, *_ = state
+            return orig(soc, imp, price, cost)
+        policy_inst.take_action = unified_take_action  # override instance method
 
     return policy_inst, init_params

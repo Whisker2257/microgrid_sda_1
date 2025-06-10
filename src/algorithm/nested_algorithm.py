@@ -2,16 +2,13 @@
 import logging
 from typing import Any, Dict, List
 
-import numpy as np
-
-from config import HORIZON, META_STEPS                  # ← root-level config
+from config import HORIZON, META_STEPS
 from src.environment.battery_env import BatteryEnvironment
 from src.policies.moving_average_policy import MovingAveragePolicy
 from src.meta.meta_controller import meta_update
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
 
 def run_nested_algorithm() -> Dict[str, Any]:
     """
@@ -22,13 +19,9 @@ def run_nested_algorithm() -> Dict[str, Any]:
     dict with keys:
         final_state, history, meta_params, final_policy, per_segment
     """
-    # ----------------------------------------------------------------
-    # 1) Initialisation
-    # ----------------------------------------------------------------
     env = BatteryEnvironment()
     N_current = env.reset()  # [soc, imported, price, cost, demand]
 
-    # Meta-history ĤN₀
     hat_N: Dict[str, List[float]] = {
         "battery_level_record": [float(N_current[0])],
         "action_record":        [],
@@ -36,32 +29,24 @@ def run_nested_algorithm() -> Dict[str, Any]:
         "total_cost_record":    [float(N_current[3])],
     }
 
-    # Meta-parameters T₀
     T_current: Dict[str, Any] = {"learning_rate": 0.01, "window_size": 24}
-
-    # Base-policy Oᴸ₀
     base_policy = MovingAveragePolicy(window=T_current["window_size"])
-
     segment_len = HORIZON // META_STEPS
     results: List[Dict[str, Any]] = []
 
-    # ----------------------------------------------------------------
-    # 2) Outer loop over meta-steps
-    # ----------------------------------------------------------------
     for V in range(META_STEPS):
         logger.info("=== Meta-step V=%d ===", V)
 
         if V > 0:
             base_policy, T_current = meta_update(base_policy, hat_N, T_current)
-            logger.info("Meta-update ➜ %s  T=%s",
-                        base_policy.__class__.__name__, T_current)
+            logger.info(
+                "Meta-update ➜ %s  T=%s",
+                base_policy.__class__.__name__,
+                T_current,
+            )
 
-        R_start, R_end = V * segment_len, (V + 1) * segment_len
-
-        # ----------------------------------------------------------------
-        # 3) Inner loop over time-steps in this segment
-        # ----------------------------------------------------------------
-        for _ in range(R_start, R_end):
+        # Inner loop: now a single unified call
+        for _ in range(segment_len):
             Q_n = base_policy.take_action(N_current)
             N_current = env.step(Q_n)
 

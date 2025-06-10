@@ -3,7 +3,7 @@
 Central configuration module
 ============================
 • Meta-algorithm & environment constants
-• LLM orchestration parameters (NOT part of T_current)
+• OpenRouter orchestration parameters (NOT part of T_current)
 • Synthetic price / demand series generation
 """
 from __future__ import annotations
@@ -19,8 +19,9 @@ HORIZON    = int(os.getenv("HORIZON", "150"))
 META_STEPS = int(os.getenv("META_STEPS", "3"))
 
 BATTERY_CAPACITY_KWH = float(os.getenv("BATTERY_CAPACITY_KWH", "100.0"))
-INITIAL_SOC          = float(os.getenv("INITIAL_SOC",
-                                        str(BATTERY_CAPACITY_KWH / 2)))
+INITIAL_SOC          = float(
+    os.getenv("INITIAL_SOC", str(BATTERY_CAPACITY_KWH / 2))
+)
 
 # ------------------------------------------------------------------
 # 2. Market price & demand series
@@ -46,27 +47,29 @@ if len(DEMAND_SERIES) < HORIZON + 1:
     raise ValueError("DEMAND_SERIES must have at least HORIZON + 1 values.")
 
 # ------------------------------------------------------------------
-# 3. LLM orchestration  (outside T_current)
+# 3. OpenRouter orchestration (replaces Deepseek+Qwen)
 # ------------------------------------------------------------------
-DEESEEK_BASE_URL = os.getenv("DEESEEK_BASE_URL",
-                             "https://api.deepseek.com/v1")   # ← NEW
-DEESEEK_API_KEY  = os.getenv("DEESEEK_API_KEY")
-QWEN_API_KEY     = os.getenv("QWEN_API_KEY")
+# ✔️ Use the official OpenRouter base URL
+OPENROUTER_BASE_URL = os.getenv(
+    "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+)
+OPENROUTER_API_KEY  = os.getenv("OPENROUTER_API_KEY")
 
-MODEL_DEEPSEEK = os.getenv("MODEL_DEEPSEEK", "deepseek-reasoner")  # ← NEW
-MODEL_QWEN     = os.getenv("MODEL_QWEN",    "Qwen2.5-Coder-32B-Instruct")
+# Match the paper’s pipeline on OpenRouter
+MODEL_DEEPSEEK      = os.getenv("MODEL_DEEPSEEK",   "deepseek/deepseek-r1")
+MODEL_QWEN          = os.getenv("MODEL_QWEN",       "qwen/qwen-2.5-coder-32b-instruct")
 
-if not DEESEEK_API_KEY or not QWEN_API_KEY:
-    raise ValueError("Both DEESEEK_API_KEY and QWEN_API_KEY must be set in .env")
+if not OPENROUTER_API_KEY:
+    raise ValueError("OPENROUTER_API_KEY must be set in your .env")
 
-TASK_TEMPERATURE = float(os.getenv("TASK_TEMPERATURE", "0.30"))
-TASK_MAX_TOKENS  = int(os.getenv("TASK_MAX_TOKENS",  "512"))
-CODE_TEMPERATURE = float(os.getenv("CODE_TEMPERATURE", "0.20"))
-CODE_MAX_TOKENS  = int(os.getenv("CODE_MAX_TOKENS",  "512"))
+TASK_TEMPERATURE    = float(os.getenv("TASK_TEMPERATURE", "0.30"))
+TASK_MAX_TOKENS     = int(os.getenv("TASK_MAX_TOKENS",  "512"))
+CODE_TEMPERATURE    = float(os.getenv("CODE_TEMPERATURE", "0.20"))
+CODE_MAX_TOKENS     = int(os.getenv("CODE_MAX_TOKENS",  "512"))
 
 # ------------------------------------------------------------------
 # 4. Physical limits & efficiencies
 # ------------------------------------------------------------------
-MAX_RATE_KWH  = float(os.getenv("MAX_RATE_KWH", "10.0"))
-EFF_CHARGE    = float(os.getenv("EFF_CHARGE",    "0.95"))
-EFF_DISCHARGE = float(os.getenv("EFF_DISCHARGE", "0.95"))
+MAX_RATE_KWH        = float(os.getenv("MAX_RATE_KWH",  "10.0"))
+EFF_CHARGE          = float(os.getenv("EFF_CHARGE",    "1.0"))
+EFF_DISCHARGE       = float(os.getenv("EFF_DISCHARGE", "1.0"))
