@@ -1,13 +1,17 @@
 # File: src/utils/filter.py
+
 import ast
 import inspect
 import numpy as np
 from typing import Tuple, Dict, Any
 
+
 def vartheta(wq_code: str) -> Tuple[Any, Dict[str, Any]]:
     """
-    Filter and instantiate an LLM-generated policy, then wrap its take_action
-    so it always conforms to take_action(state: np.ndarray) -> float.
+    Filter and instantiate an LLM-generated policy, then ensure it
+    conforms to take_action(state: np.ndarray) -> float.
+
+    Raises ValueError on any safety, signature, or instantiation error.
     """
     # 1) Parse & ban imports
     tree = ast.parse(wq_code)
@@ -18,7 +22,9 @@ def vartheta(wq_code: str) -> Tuple[Any, Dict[str, Any]]:
     # 2) Exec in a namespace where np is available
     safe_globals: Dict[str, Any] = {"np": np}
     local_ns: Dict[str, Any] = {}
-    exec(compile(tree, filename="<generated_policy>", mode="exec"), safe_globals, local_ns)
+    exec(compile(tree, filename="<generated_policy>", mode="exec"),
+         safe_globals,
+         local_ns)
 
     # 3) Find exactly one policy class
     policy_classes = [
@@ -26,10 +32,12 @@ def vartheta(wq_code: str) -> Tuple[Any, Dict[str, Any]]:
         if inspect.isclass(obj) and hasattr(obj, "take_action")
     ]
     if len(policy_classes) != 1:
-        raise ValueError(f"Expected exactly one policy class with take_action, found {len(policy_classes)}")
+        raise ValueError(
+            f"Expected exactly one policy class with take_action, found {len(policy_classes)}"
+        )
     PolicyClass = policy_classes[0]
 
-    # 4) Inspect __init__ for defaults
+    # 4) Inspect __init__ for parameters and defaults
     sig = inspect.signature(PolicyClass.__init__)
     init_params: Dict[str, Any] = {}
     for name, param in sig.parameters.items():
@@ -39,14 +47,18 @@ def vartheta(wq_code: str) -> Tuple[Any, Dict[str, Any]]:
             raise ValueError(f"Parameter '{name}' in __init__ must have a default value.")
         init_params[name] = param.default
 
-    # 5) Instantiate policy
-    policy_inst = PolicyClass(**init_params)
+    # 5) Instantiate policy, catching any errors (e.g., NameError)
+    try:
+        policy_inst = PolicyClass(**init_params)
+    except Exception as e:
+        # Wrap any instantiation error so meta_update will retry
+        raise ValueError(f"Error instantiating policy: {e}")
 
     # 6) Wrap its take_action if it doesn't already accept a single state arg
     orig = policy_inst.take_action
     bound_sig = inspect.signature(orig)
     if len(bound_sig.parameters) != 1:
-        # e.g. orig takes (state_of_charge, imported_energy, market_price, cost)
+        # e.g. orig takes (soc, imp, price, cost)
         def unified_take_action(state: np.ndarray) -> float:
             soc, imp, price, cost, *_ = state
             return orig(soc, imp, price, cost)

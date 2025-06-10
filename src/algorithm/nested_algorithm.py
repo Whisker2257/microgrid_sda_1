@@ -1,6 +1,8 @@
 # File: src/algorithm/nested_algorithm.py
+# File: src/algorithm/nested_algorithm.py
+
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
 from config import HORIZON, META_STEPS
 from src.environment.battery_env import BatteryEnvironment
@@ -9,6 +11,7 @@ from src.meta.meta_controller import meta_update
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
 
 def run_nested_algorithm() -> Dict[str, Any]:
     """
@@ -37,6 +40,7 @@ def run_nested_algorithm() -> Dict[str, Any]:
     for V in range(META_STEPS):
         logger.info("=== Meta-step V=%d ===", V)
 
+        # Meta-update
         if V > 0:
             base_policy, T_current = meta_update(base_policy, hat_N, T_current)
             logger.info(
@@ -45,17 +49,40 @@ def run_nested_algorithm() -> Dict[str, Any]:
                 T_current,
             )
 
-        # Inner loop: now a single unified call
+        # Inner loop over this segment
         for _ in range(segment_len):
-            Q_n = base_policy.take_action(N_current)
+            # Convert state array to tuple of floats
+            state: Sequence[float] = tuple(float(x) for x in N_current)
+
+            # Call unified API
+            Q_n = base_policy.take_action(state)
+
+            # --- Validation & fallback ---
+            try:
+                # Catch None or non-numeric returns
+                if Q_n is None:
+                    raise TypeError("take_action returned None")
+                Q_n = float(Q_n)
+            except Exception as e:
+                logger.warning(
+                    "Invalid action %r from %s; defaulting to 0.0 (%s)",
+                    Q_n,
+                    base_policy.__class__.__name__,
+                    e,
+                )
+                Q_n = 0.0
+
+            # Step environment
             N_current = env.step(Q_n)
 
+            # Record
             hat_N["battery_level_record"].append(float(N_current[0]))
             hat_N["action_record"].append(float(Q_n))
             delta_cost = float(N_current[3]) - hat_N["total_cost_record"][-1]
             hat_N["cost_per_time_record"].append(delta_cost)
             hat_N["total_cost_record"].append(float(N_current[3]))
 
+        # Segment cost
         segment_cost = sum(hat_N["cost_per_time_record"][-segment_len:])
         logger.info("Segment %d cost = %.3f", V, segment_cost)
 

@@ -23,7 +23,6 @@ def _safe_get_source(obj) -> str:
     try:
         return inspect.getsource(obj.__class__)
     except (OSError, TypeError):
-        # Fallback if source isn't available
         return obj.__class__.__name__
 
 
@@ -34,15 +33,19 @@ def meta_update(
     *,
     max_retries: int = 3,
 ) -> Tuple[Any, Dict[str, Any]]:
-    """Generate, filter, and instantiate a new base policy."""
-    # Start with the source of the current base_policy (class code or name)
-    last_code_src: str = _safe_get_source(base_policy)
+    """
+    Generate, filter, and instantiate a new base policy, feeding the full
+    code of the last policy (and any error context) back into the Task Generator.
+    """
     error_msg: str | None = None
+
+    # Start with the source of the current policy (fallback to class name)
+    last_code_src = _safe_get_source(base_policy)
 
     for attempt in range(1, max_retries + 1):
         logger.info("Meta-update attempt %d/%d", attempt, max_retries)
 
-        # Build the task prompt using the last code snippet as context
+        # 1) Build task prompt, including the full text of the last policy
         task_prompt = build_task_prompt(
             last_code_src,
             meta_history,
@@ -50,26 +53,27 @@ def meta_update(
             error_ctx=error_msg,
         )
 
-        # Attempt to generate fresh policy code via the Code Generator LLM
+        # 2) Call Code Generator (generate_policy_code), fallback to last_code_src on API errors
         try:
             code_snippet = generate_policy_code(task_prompt)
         except RequestException as e:
             logger.warning(
-                "Code-generator API error (%s). Falling back to last known code snippet.",
-                e,
+                "Code-generator API error (%s). Reusing last policy code.",
+                e
             )
             code_snippet = last_code_src
 
-        # Filter and instantiate the generated code
+        # Update last_code_src so the next prompt sees this snippet
+        last_code_src = code_snippet
+
+        # 3) Filter & instantiate via ϑ
         try:
             new_policy, new_params = vartheta(code_snippet)
             logger.info("ϑ accepted generated policy")
             return new_policy, new_params
+
         except ValueError as err:
-            # Record failure reason and retry with updated prompt
             error_msg = str(err)
             logger.warning("ϑ rejected policy: %s", error_msg)
-            last_code_src = code_snippet
 
-    # All attempts failed
     raise RuntimeError("Meta-controller failed after all retries.")
